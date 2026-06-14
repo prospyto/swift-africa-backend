@@ -131,6 +131,8 @@ class Transaction(models.Model):
         ('RETRAIT', 'Retrait Mobile Money'),
         ('GAIN_LIVRAISON', 'Gain de Livraison'),
         ('COMMISSION', 'Commission Application'),
+        ('REMBOURSEMENT', 'Remboursement Client'),
+        ('LITIGE', 'Litige / Course Bloquée'),
     ]
     
     STATUT_CHOICES = [
