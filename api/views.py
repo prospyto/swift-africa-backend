@@ -78,6 +78,11 @@ class LivreurViewSet(viewsets.ModelViewSet):
 # PRODUITS / COMMANDES
 # =========================================================
 class ProduitViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet pour les produits :
+    - GET public (voir tous les produits)
+    - POST/PUT/DELETE : seulement pour le vendeur propriétaire
+    """
     queryset = Produit.objects.all()
     serializer_class = ProduitSerializer
     permission_classes = [IsOwnerOrReadOnly]
@@ -89,8 +94,14 @@ class ProduitViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         # Produit.vendeur est un FK vers le modèle Vendeur (pas Utilisateur directement)
-        vendeur_profil = self.request.user.profil_vendeur
-        serializer.save(vendeur=vendeur_profil)
+        try:
+            vendeur_profil = self.request.user.profil_vendeur
+            serializer.save(vendeur=vendeur_profil)
+        except Vendeur.DoesNotExist:
+            return Response(
+                {"error": "Vous n'avez pas de profil vendeur. Créez-en un d'abord."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 
 class CommandeViewSet(viewsets.ModelViewSet):
