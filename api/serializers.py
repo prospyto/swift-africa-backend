@@ -3,6 +3,7 @@ from .models import (
     Utilisateur, Acheteur, Vendeur, Produit, Livreur, Commande,
     Notification, Mission, Ville, Wallet, Transaction
 )
+from .image_utils import optimize_product_image
 
 
 # --- UTILISATEUR ---
@@ -59,10 +60,36 @@ class LivreurSerializer(serializers.ModelSerializer):
 
 # --- PRODUITS / COMMANDES ---
 class ProduitSerializer(serializers.ModelSerializer):
+    """Sérialise les produits avec optimisation d'image"""
+    vendeur_nom = serializers.SerializerMethodField()
+    
     class Meta:
         model = Produit
-        fields = '__all__'
-        read_only_fields = ['vendeur']  # défini automatiquement côté serveur
+        fields = [
+            'id', 'nom', 'description', 'prix', 'prix_solde',
+            'image', 'categorie', 'ville', 'vendeur', 'vendeur_nom',
+            'cree_le', 'mis_a_jour_le'
+        ]
+        read_only_fields = ['vendeur', 'cree_le', 'mis_a_jour_le']
+
+    def get_vendeur_nom(self, obj):
+        """Retourne le nom de la boutique du vendeur"""
+        return obj.vendeur.boutique if obj.vendeur else None
+    
+    def create(self, validated_data):
+        """Crée un produit avec optimisation d'image"""
+        if 'image' in validated_data and validated_data['image']:
+            validated_data['image'] = optimize_product_image(validated_data['image'])
+        return super().create(validated_data)
+    
+    def update(self, instance, validated_data):
+        """Met à jour un produit avec optimisation d'image si nouveau fichier"""
+        if 'image' in validated_data and validated_data['image']:
+            # Supprime l'ancienne image si elle existe
+            if instance.image:
+                instance.image.delete(save=False)
+            validated_data['image'] = optimize_product_image(validated_data['image'])
+        return super().update(instance, validated_data)
 
 
 class CommandeSerializer(serializers.ModelSerializer):
