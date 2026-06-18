@@ -35,14 +35,23 @@ class Vendeur(models.Model):
 class Produit(models.Model):
     vendeur = models.ForeignKey(Vendeur, on_delete=models.CASCADE, related_name='produits')
     nom = models.CharField(max_length=200)
+    description = models.TextField(blank=True, default='')
     prix = models.DecimalField(max_digits=10, decimal_places=2)
+    prix_solde = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     image = models.ImageField(upload_to='produits/', null=True, blank=True)
+    categorie = models.CharField(max_length=100, blank=True, default='')
+    ville = models.ForeignKey(Ville, on_delete=models.SET_NULL, null=True, blank=True, related_name='produits')
+    cree_le = models.DateTimeField(auto_now_add=True)
+    mis_a_jour_le = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.nom} - {self.prix} FCFA"
 
 class Livreur(models.Model):
     user = models.OneToOneField(Utilisateur, on_delete=models.CASCADE, related_name='profil_livreur')
     gains_cumules = models.DecimalField(max_digits=10, decimal_places=2, default=0.0)
 
-# --- 5. LES COMMANDES ---
+# --- 4. LES COMMANDES ---
 class Commande(models.Model):
     STATUT_CHOICES = [
         ('En attente', 'En attente'),
@@ -57,50 +66,42 @@ class Commande(models.Model):
 
     def __str__(self):
         return f"Commande {self.id} - {self.produit.nom}"
-    
-# --- 4. LES MISSIONS (VERSION UNIFIÉE) ---
+
+# --- 5. LES MISSIONS ---
 class Mission(models.Model):
     vendeur = models.ForeignKey(Utilisateur, on_delete=models.CASCADE, related_name='missions_creees', null=True, blank=True)
     livreur = models.ForeignKey(Utilisateur, on_delete=models.SET_NULL, null=True, blank=True, related_name='missions_acceptees')
-    
+
     ville_depart = models.ForeignKey(Ville, on_delete=models.PROTECT, related_name='departs', null=True, blank=True)
     ville_arrivee = models.ForeignKey(Ville, on_delete=models.PROTECT, related_name='arrivees', null=True, blank=True)
-    
+
     adresse_precise = models.TextField()
-    
-    # Médias : Notes vocales et photos de preuves
+
     note_vocale = models.FileField(upload_to='vocaux/', null=True, blank=True)
     photo_preuve = models.ImageField(upload_to='preuves/', null=True, blank=True)
-    
-    # Éléments financiers et de sécurité
+
     prix_livraison = models.DecimalField(max_digits=10, decimal_places=2, editable=False)
     code_validation = models.CharField(max_length=4, blank=True)
     statut = models.CharField(max_length=20, default='attente')
 
     def save(self, *args, **kwargs):
-        # Sécurité : Importation locale de random pour s'assurer que le code de validation génère sans planter
         import random
-
-        # Calcul automatique et sécurisé du prix basé sur la distance des villes
         try:
             distance = abs(self.ville_arrivee.distance_reference - self.ville_depart.distance_reference)
-            if distance == 0: 
+            if distance == 0:
                 distance = 5
             self.prix_livraison = distance * 100 + 500
         except Exception:
-            # Sécurité si les villes ne sont pas encore renseignées à la création
-            self.prix_livraison = 500 
-            
-        # Génération automatique d'un code de validation à 4 chiffres si absent
+            self.prix_livraison = 500
+
         if not self.code_validation:
             self.code_validation = str(random.randint(1000, 9999))
-            
+
         super().save(*args, **kwargs)
 
     def __str__(self):
         return f"Mission {self.id} - Statut : {self.statut} ({self.prix_livraison} FCFA)"
 
-"""notification """           
 
 class Notification(models.Model):
     utilisateur = models.ForeignKey('Utilisateur', on_delete=models.CASCADE, related_name='notifications')
@@ -112,10 +113,8 @@ class Notification(models.Model):
     def __str__(self):
         return f"{self.titre} - {self.utilisateur.username}"
 
-# --- 5. SYSTÈME DE PORTEFEUILLE & PAIEMENTS ---
 
 class Wallet(models.Model):
-    # Chaque utilisateur (et particulièrement les livreurs/vendeurs) a un portefeuille unique
     utilisateur = models.OneToOneField(Utilisateur, on_delete=models.CASCADE, related_name='wallet')
     solde = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     cree_le = models.DateTimeField(auto_now_add=True)
@@ -134,7 +133,7 @@ class Transaction(models.Model):
         ('REMBOURSEMENT', 'Remboursement Client'),
         ('LITIGE', 'Litige / Course Bloquée'),
     ]
-    
+
     STATUT_CHOICES = [
         ('EN_ATTENTE', 'En attente'),
         ('SUCCES', 'Succès'),
@@ -145,8 +144,8 @@ class Transaction(models.Model):
     type_transaction = models.CharField(max_length=20, choices=TYPE_CHOICES)
     montant = models.DecimalField(max_digits=10, decimal_places=2)
     statut = models.CharField(max_length=15, choices=STATUT_CHOICES, default='EN_ATTENTE')
-    reference_externe = models.CharField(max_length=100, blank=True, null=True, help_text="ID de transaction du Mobile Money (FedaPay, KKiaPay...)")
+    reference_externe = models.CharField(max_length=100, blank=True, null=True)
     cree_le = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.type_transaction} - {self.montant} FCFA ({self.statut})"    
+        return f"{self.type_transaction} - {self.montant} FCFA ({self.statut})"
