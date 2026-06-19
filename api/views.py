@@ -6,6 +6,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import (
     Utilisateur, Acheteur, Vendeur, Produit, Livreur, Commande,
@@ -15,7 +16,8 @@ from .serializers import (
     UtilisateurSerializer, AcheteurSerializer, VendeurSerializer,
     ProduitSerializer, LivreurSerializer, CommandeSerializer,
     NotificationSerializer, MissionSerializer, VilleSerializer,
-    WalletSerializer, TransactionSerializer
+    WalletSerializer, TransactionSerializer,
+    AuthUserSerializer, RegisterSerializer,
 )
 from .permissions import IsOwnerOrReadOnly
 
@@ -273,6 +275,66 @@ class DeclarerIncidentView(APIView):
             "message": "Incident déclaré avec succès.",
             "statut_mission": mission.statut,
         }, status=status.HTTP_200_OK)
+
+
+# =========================================================
+# AUTHENTIFICATION (login / register / me)
+# =========================================================
+def _auth_payload(user):
+    """Construit la réponse {token, user} attendue par le frontend."""
+    refresh = RefreshToken.for_user(user)
+    return {
+        "token": str(refresh.access_token),
+        "refresh": str(refresh),
+        "user": AuthUserSerializer(user).data,
+    }
+
+
+class RegisterView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = RegisterSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        user = serializer.save()
+        return Response(_auth_payload(user), status=status.HTTP_201_CREATED)
+
+
+class LoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email', '')
+        password = request.data.get('password', '')
+        if not email or not password:
+            return Response(
+                {"error": "Email et mot de passe requis."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            user = Utilisateur.objects.get(email__iexact=email)
+        except Utilisateur.DoesNotExist:
+            return Response(
+                {"error": "Email ou mot de passe incorrect."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        if not user.check_password(password):
+            return Response(
+                {"error": "Email ou mot de passe incorrect."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        return Response(_auth_payload(user), status=status.HTTP_200_OK)
+
+
+class AuthMeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(AuthUserSerializer(request.user).data)
 
 
 # =========================================================

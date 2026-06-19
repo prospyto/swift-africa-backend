@@ -145,3 +145,79 @@ class WalletSerializer(serializers.ModelSerializer):
         model = Wallet
         fields = ['id', 'utilisateur_username', 'solde', 'mis_a_jour_le', 'transactions']
         read_only_fields = ['id', 'solde', 'mis_a_jour_le']
+
+
+# --- AUTHENTIFICATION (login / register) ---
+# Le frontend attend un utilisateur avec un champ "role" unique
+# ('acheteur' | 'vendeur' | 'livreur'), alors que le modèle Django stocke
+# trois booléens indépendants (est_acheteur, est_vendeur, est_livreur).
+# Ce serializer fait le pont entre les deux représentations.
+def _roles_actifs(user):
+    roles = []
+    if user.est_acheteur:
+        roles.append('acheteur')
+    if user.est_vendeur:
+        roles.append('vendeur')
+    if user.est_livreur:
+        roles.append('livreur')
+    return roles or ['acheteur']
+
+
+class AuthUserSerializer(serializers.ModelSerializer):
+    nom = serializers.CharField(source='last_name')
+    prenom = serializers.CharField(source='first_name')
+    role = serializers.SerializerMethodField()
+    availableRoles = serializers.SerializerMethodField()
+    score = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Utilisateur
+        fields = ['id', 'nom', 'prenom', 'telephone', 'email', 'role', 'availableRoles', 'score']
+
+    def get_role(self, user):
+        return _roles_actifs(user)[0]
+
+    def get_availableRoles(self, user):
+        return _roles_actifs(user)
+
+    def get_score(self, user):
+        return 5.0
+
+
+class RegisterSerializer(serializers.ModelSerializer):
+    nom = serializers.CharField(write_only=True)
+    prenom = serializers.CharField(write_only=True)
+    role = serializers.ChoiceField(
+        choices=['acheteur', 'vendeur', 'livreur'], write_only=True
+    )
+    password = serializers.CharField(write_only=True, min_length=6)
+
+    class Meta:
+        model = Utilisateur
+        fields = ['nom', 'prenom', 'telephone', 'email', 'role', 'password']
+
+    def validate_email(self, value):
+        if Utilisateur.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError('Un compte existe déjà avec cet email.')
+        return value
+
+    def create(self, validated_data):
+        role = validated_data.pop('role')
+        password = validated_data.pop('password')
+        nom = validated_data.pop('nom')
+        prenom = validated_data.pop('prenom')
+        email = validated_data['email']
+
+        user = Utilisateur(
+            username=email,
+            email=email,
+            last_name=nom,
+            first_name=prenom,
+            telephone=validated_data.get('telephone', ''),
+            est_acheteur=(role == 'acheteur'),
+            est_vendeur=(role == 'vendeur'),
+            est_livreur=(role == 'livreur'),
+        )
+        user.set_password(password)
+        user.save()
+        return user

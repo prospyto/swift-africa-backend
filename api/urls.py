@@ -9,6 +9,7 @@ from .views import (
     valider_livraison, DeclarerIncidentView,
     mon_profil, NotificationListView,
     MonPortefeuilleView, SimulerDepotView,
+    RegisterView, LoginView, AuthMeView,
 )
 
 router = DefaultRouter()
@@ -21,6 +22,11 @@ router.register(r'commandes', CommandeViewSet, basename='commande')
 router.register(r'villes', VilleViewSet, basename='ville')
 
 urlpatterns = [
+    # --- Authentification ---
+    path('auth/register/', RegisterView.as_view(), name='auth-register'),
+    path('auth/login/', LoginView.as_view(), name='auth-login'),
+    path('auth/me/', AuthMeView.as_view(), name='auth-me'),
+
     # --- Ressources CRUD standard (router) ---
     path('', include(router.urls)),
 
