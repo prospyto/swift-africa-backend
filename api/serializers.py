@@ -129,7 +129,7 @@ class MessageChatSerializer(serializers.ModelSerializer):
 
 
 class ConversationSerializer(serializers.ModelSerializer):
-    messages = MessageChatSerializer(many=True, read_only=True, context_kwargs={})
+    messages = MessageChatSerializer(many=True, read_only=True)
     participants_info = serializers.SerializerMethodField()
     non_lus = serializers.SerializerMethodField()
 
@@ -212,3 +212,4 @@ class RegisterSerializer(serializers.ModelSerializer):
         user.set_password(password)
         user.save()
         return user
+
