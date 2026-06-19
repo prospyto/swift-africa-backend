@@ -1,6 +1,5 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-
 from .views import (
     UtilisateurViewSet, AcheteurViewSet, VendeurViewSet, ProduitViewSet,
     LivreurViewSet, CommandeViewSet, VilleViewSet,
@@ -10,6 +9,7 @@ from .views import (
     mon_profil, NotificationListView,
     MonPortefeuilleView, SimulerDepotView,
     RegisterView, LoginView, AuthMeView,
+    ConversationCommandeView, MessagesNonLusView,
 )
 
 router = DefaultRouter()
@@ -22,15 +22,15 @@ router.register(r'commandes', CommandeViewSet, basename='commande')
 router.register(r'villes', VilleViewSet, basename='ville')
 
 urlpatterns = [
-    # --- Authentification ---
+    # Authentification
     path('auth/register/', RegisterView.as_view(), name='auth-register'),
     path('auth/login/', LoginView.as_view(), name='auth-login'),
     path('auth/me/', AuthMeView.as_view(), name='auth-me'),
 
-    # --- Ressources CRUD standard (router) ---
+    # CRUD standard
     path('', include(router.urls)),
 
-    # --- Missions (livraison) ---
+    # Missions
     path('missions/creer/', MissionCreateView.as_view(), name='mission-creer'),
     path('missions/liste/', MissionListView.as_view(), name='missions-liste'),
     path('missions/disponibles/', MissionsDisponiblesListView.as_view(), name='missions-disponibles'),
@@ -40,13 +40,13 @@ urlpatterns = [
     path('missions/<int:mission_id>/valider/', valider_livraison, name='valider-livraison'),
     path('missions/<int:mission_id>/incident/', DeclarerIncidentView.as_view(), name='declarer-incident'),
 
-    # --- Profil utilisateur ---
+    # Chat
+    path('chat/commande/<int:commande_id>/', ConversationCommandeView.as_view(), name='chat-commande'),
+    path('chat/non-lus/', MessagesNonLusView.as_view(), name='chat-non-lus'),
+
+    # Profil / Notifs / Wallet
     path('me/', mon_profil, name='mon-profil'),
-
-    # --- Notifications ---
     path('notifications/', NotificationListView.as_view(), name='notifications'),
-
-    # --- Portefeuille ---
     path('portefeuille/', MonPortefeuilleView.as_view(), name='mon-portefeuille'),
     path('portefeuille/depot-simulation/', SimulerDepotView.as_view(), name='simuler-depot'),
 ]
