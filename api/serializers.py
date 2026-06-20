@@ -1,6 +1,7 @@
+from decimal import Decimal
 from rest_framework import serializers
 from .models import (
-    Utilisateur, Acheteur, Vendeur, Produit, Livreur, Commande,
+    Utilisateur, Acheteur, Vendeur, Produit, Livreur, Commande, LigneCommande,
     Notification, Mission, Ville, Wallet, Transaction,
     ConversationCommande, MessageChat,
 )
@@ -59,10 +60,98 @@ class ProduitSerializer(serializers.ModelSerializer):
             validated_data['image'] = optimize_product_image(validated_data['image'])
         return super().update(instance, validated_data)
 
+class LigneCommandeSerializer(serializers.ModelSerializer):
+    produit_nom = serializers.ReadOnlyField(source='produit.nom')
+    produit_image = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LigneCommande
+        fields = ['id', 'produit', 'produit_nom', 'produit_image', 'quantite', 'prix_unitaire']
+
+    def get_produit_image(self, obj):
+        if obj.produit.image:
+            return obj.produit.image.url
+        return None
+
+
 class CommandeSerializer(serializers.ModelSerializer):
+    """
+    Sérialise/désérialise une commande "panier".
+    En écriture, attend : produits=[{id, quantite}, ...], ville_depart,
+    ville_arrivee (id ou nom de ville). Le total et le prix de chaque
+    ligne sont calculés côté serveur à partir du prix réel du produit
+    en base — jamais à partir d'une valeur envoyée par le client.
+    """
+    lignes = LigneCommandeSerializer(many=True, read_only=True)
+    ville_depart_nom = serializers.ReadOnlyField(source='ville_depart.nom')
+    ville_arrivee_nom = serializers.ReadOnlyField(source='ville_arrivee.nom')
+    livreur_nom = serializers.SerializerMethodField()
+
+    # Champs d'écriture uniquement, pour construire le panier à la création
+    produits = serializers.ListField(child=serializers.DictField(), write_only=True)
+
+    # Le frontend envoie le nom de la ville (texte libre), pas son id.
+    ville_depart = serializers.CharField(write_only=True)
+    ville_arrivee = serializers.CharField(write_only=True)
+
     class Meta:
         model = Commande
-        fields = '__all__'
+        fields = [
+            'id', 'acheteur', 'ville_depart', 'ville_depart_nom',
+            'ville_arrivee', 'ville_arrivee_nom', 'total', 'otp', 'statut',
+            'note_donnee', 'cree_le', 'mis_a_jour_le', 'lignes', 'produits',
+            'livreur_nom',
+        ]
+        read_only_fields = ['acheteur', 'total', 'otp', 'statut', 'note_donnee']
+
+    def get_livreur_nom(self, obj):
+        mission = getattr(obj, 'mission', None)
+        return mission.livreur.username if mission and mission.livreur else None
+
+    def validate_produits(self, value):
+        if not value:
+            raise serializers.ValidationError('Le panier ne peut pas être vide.')
+        for item in value:
+            if 'id' not in item:
+                raise serializers.ValidationError("Chaque article doit avoir un champ 'id'.")
+        return value
+
+    def create(self, validated_data):
+        produits_data = validated_data.pop('produits')
+        nom_depart = validated_data.pop('ville_depart')
+        nom_arrivee = validated_data.pop('ville_arrivee')
+
+        ville_depart, _ = Ville.objects.get_or_create(
+            nom=nom_depart, defaults={'distance_reference': 0}
+        )
+        ville_arrivee, _ = Ville.objects.get_or_create(
+            nom=nom_arrivee, defaults={'distance_reference': 0}
+        )
+
+        commande = Commande.objects.create(
+            ville_depart=ville_depart, ville_arrivee=ville_arrivee,
+            **validated_data,
+        )
+
+        total = Decimal('0.00')
+        for item in produits_data:
+            try:
+                produit = Produit.objects.get(id=item['id'])
+            except Produit.DoesNotExist:
+                commande.delete()
+                raise serializers.ValidationError(f"Produit {item.get('id')} introuvable.")
+
+            quantite = max(1, int(item.get('quantite', 1)))
+            prix_unitaire = produit.prix_solde if produit.prix_solde else produit.prix
+            LigneCommande.objects.create(
+                commande=commande, produit=produit,
+                quantite=quantite, prix_unitaire=prix_unitaire,
+            )
+            total += prix_unitaire * quantite
+
+        commande.total = total
+        commande.save(update_fields=['total'])
+        return commande
 
 class VilleSerializer(serializers.ModelSerializer):
     class Meta:
@@ -74,10 +163,15 @@ class MissionSerializer(serializers.ModelSerializer):
     vendeur_nom = serializers.ReadOnlyField(source='vendeur.username')
     ville_depart_nom = serializers.ReadOnlyField(source='ville_depart.nom')
     ville_arrivee_nom = serializers.ReadOnlyField(source='ville_arrivee.nom')
+    ville_arrivee_latitude = serializers.ReadOnlyField(source='ville_arrivee.latitude')
+    ville_arrivee_longitude = serializers.ReadOnlyField(source='ville_arrivee.longitude')
     class Meta:
         model = Mission
         fields = '__all__'
-        read_only_fields = ['prix_livraison', 'code_validation', 'vendeur', 'livreur']
+        read_only_fields = [
+            'prix_livraison', 'code_validation', 'vendeur', 'livreur',
+            'position_livreur_lat', 'position_livreur_lng', 'position_mise_a_jour_le',
+        ]
 
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:

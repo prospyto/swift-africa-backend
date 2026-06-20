@@ -1,5 +1,6 @@
 from decimal import Decimal
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import viewsets, generics, status, serializers
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -86,6 +87,122 @@ class CommandeViewSet(viewsets.ModelViewSet):
         return Commande.objects.none()
     def perform_create(self, serializer):
         serializer.save(acheteur=self.request.user.profil_acheteur)
+
+
+class FinancerCommandeView(APIView):
+    """
+    L'acheteur finance sa commande : le montant est débité de son wallet
+    et placé en escrow (la commande passe en 'finance', l'argent n'est
+    visible nulle part sauf retenu sur le wallet acheteur jusqu'au
+    décaissement). Une Mission de livraison est créée automatiquement.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, commande_id):
+        try:
+            commande = Commande.objects.get(
+                id=commande_id, acheteur=request.user.profil_acheteur,
+            )
+        except Commande.DoesNotExist:
+            return Response({"error": "Commande introuvable."}, status=404)
+
+        if commande.statut != 'en_attente':
+            return Response(
+                {"error": f"Commande déjà au statut '{commande.statut}'."},
+                status=400,
+            )
+
+        wallet = request.user.wallet
+        if wallet.solde < commande.total:
+            return Response(
+                {"error": "Solde insuffisant. Rechargez votre wallet."},
+                status=400,
+            )
+
+        with transaction.atomic():
+            wallet.solde -= commande.total
+            wallet.save(update_fields=['solde'])
+            Transaction.objects.create(
+                wallet=wallet, type_transaction='ESCROW',
+                montant=commande.total, statut='SUCCES',
+                reference_externe=f"ESCROW-COMMANDE-{commande.id}",
+            )
+
+            commande.statut = 'finance'
+            commande.save(update_fields=['statut'])
+
+            # Crée la mission de livraison liée, si elle n'existe pas déjà
+            if not hasattr(commande, 'mission'):
+                premiere_ligne = commande.lignes.select_related('produit__vendeur__user').first()
+                vendeur_user = premiere_ligne.produit.vendeur.user if premiere_ligne else None
+                Mission.objects.create(
+                    commande=commande,
+                    vendeur=vendeur_user,
+                    ville_depart=commande.ville_depart,
+                    ville_arrivee=commande.ville_arrivee,
+                    adresse_precise=request.user.profil_acheteur.adresse or '',
+                    statut='attente',
+                )
+
+        return Response(CommandeSerializer(commande).data)
+
+
+class DecaisserCommandeView(APIView):
+    """
+    Décaisse une commande livrée : crédite le vendeur du montant des
+    produits (moins la commission appli) et le livreur de sa
+    commission de livraison.
+    """
+    permission_classes = [IsAuthenticated]
+    COMMISSION_APP = Decimal('0.12')  # 12% prélevés sur le montant produit
+    COMMISSION_LIVREUR = Decimal('0.08')  # 8% du prix de livraison de la mission
+
+    def post(self, request, commande_id):
+        try:
+            commande = Commande.objects.get(
+                id=commande_id, acheteur=request.user.profil_acheteur,
+            )
+        except Commande.DoesNotExist:
+            return Response({"error": "Commande introuvable."}, status=404)
+
+        if commande.statut != 'livre':
+            return Response(
+                {"error": "La commande doit être livrée avant décaissement."},
+                status=400,
+            )
+
+        with transaction.atomic():
+            # Paiement du/des vendeur(s), proportionnellement à leurs lignes
+            for ligne in commande.lignes.select_related('produit__vendeur__user'):
+                montant_ligne = ligne.prix_unitaire * ligne.quantite
+                part_vendeur = montant_ligne * (1 - self.COMMISSION_APP)
+                vendeur_user = ligne.produit.vendeur.user
+                wallet_vendeur, _ = Wallet.objects.get_or_create(utilisateur=vendeur_user)
+                wallet_vendeur.solde += part_vendeur
+                wallet_vendeur.save(update_fields=['solde'])
+                Transaction.objects.create(
+                    wallet=wallet_vendeur, type_transaction='GAIN_LIVRAISON',
+                    montant=part_vendeur, statut='SUCCES',
+                    reference_externe=f"VENTE-COMMANDE-{commande.id}-LIGNE-{ligne.id}",
+                )
+
+            # Paiement du livreur
+            mission = getattr(commande, 'mission', None)
+            if mission and mission.livreur:
+                gain_livreur = mission.prix_livraison * self.COMMISSION_LIVREUR
+                wallet_livreur, _ = Wallet.objects.get_or_create(utilisateur=mission.livreur)
+                wallet_livreur.solde += gain_livreur
+                wallet_livreur.save(update_fields=['solde'])
+                Transaction.objects.create(
+                    wallet=wallet_livreur, type_transaction='GAIN_LIVRAISON',
+                    montant=gain_livreur, statut='SUCCES',
+                    reference_externe=f"LIVRAISON-MISSION-{mission.id}",
+                )
+
+            commande.statut = 'decaisse'
+            commande.save(update_fields=['statut'])
+
+        return Response(CommandeSerializer(commande).data)
 
 class VilleViewSet(viewsets.ModelViewSet):
     queryset = Ville.objects.all()
@@ -210,9 +327,15 @@ def accepter_mission(request, mission_id):
         return Response({"error": "Mission non disponible."}, status=400)
     if mission.livreur is not None:
         return Response({"error": "Mission déjà prise."}, status=400)
-    mission.livreur = request.user
-    mission.statut = 'en_cours'
-    mission.save()
+
+    with transaction.atomic():
+        mission.livreur = request.user
+        mission.statut = 'en_cours'
+        mission.save(update_fields=['livreur', 'statut'])
+        if mission.commande and mission.commande.statut == 'finance':
+            mission.commande.statut = 'en_livraison'
+            mission.commande.save(update_fields=['statut'])
+
     if mission.vendeur:
         Notification.objects.create(
             utilisateur=mission.vendeur,
@@ -228,12 +351,25 @@ def valider_livraison(request, mission_id):
         mission = Mission.objects.get(id=mission_id, livreur=request.user)
     except Mission.DoesNotExist:
         return Response({"error": "Mission introuvable."}, status=404)
-    code_saisi = request.data.get('code')
-    if mission.code_validation == str(code_saisi):
+
+    code_saisi = str(request.data.get('code', ''))
+    # Le code communiqué à l'acheteur est celui de sa Commande (otp),
+    # pas un code séparé sur la Mission — c'est ce code qu'il donne au
+    # livreur à la réception pour confirmer la livraison.
+    commande = mission.commande
+    code_attendu = commande.otp if commande else mission.code_validation
+
+    if code_attendu != code_saisi:
+        return Response({"status": "error", "message": "Code incorrect."}, status=400)
+
+    with transaction.atomic():
         mission.statut = 'livre'
-        mission.save()
-        return Response({"status": "success", "message": "Livraison validée !"})
-    return Response({"status": "error", "message": "Code incorrect."}, status=400)
+        mission.save(update_fields=['statut'])
+        if commande:
+            commande.statut = 'livre'
+            commande.save(update_fields=['statut'])
+
+    return Response({"status": "success", "message": "Livraison validée !"})
 
 class DeclarerIncidentView(APIView):
     permission_classes = [IsAuthenticated]
@@ -255,6 +391,82 @@ class DeclarerIncidentView(APIView):
                     reference_externe=f"INCIDENT-MISSION-{mission.id}"
                 )
         return Response({"message": "Incident déclaré.", "statut_mission": mission.statut})
+
+
+# =========================================================
+# SUIVI GPS
+# =========================================================
+class MissionDestinationView(APIView):
+    """Destination (coordonnées de la ville d'arrivée) d'une mission.
+    Lecture ouverte à toute personne authentifiée impliquée dans la
+    mission n'est pas vérifiée finement ici : la donnée n'est pas
+    sensible (juste les coordonnées d'une ville)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, mission_id):
+        try:
+            mission = Mission.objects.get(id=mission_id)
+        except Mission.DoesNotExist:
+            return Response({"error": "Mission introuvable."}, status=404)
+
+        ville = mission.ville_arrivee
+        if not ville or ville.latitude is None or ville.longitude is None:
+            return Response(
+                {"error": "Coordonnées de destination indisponibles."},
+                status=404,
+            )
+
+        return Response({
+            "latitude": ville.latitude,
+            "longitude": ville.longitude,
+            "address": mission.adresse_precise or ville.nom,
+        })
+
+
+class MissionPositionView(APIView):
+    """
+    GET  : dernière position connue du livreur (pour l'acheteur/vendeur qui suit la livraison).
+    POST : le livreur pousse sa position actuelle (appelé régulièrement depuis son téléphone).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, mission_id):
+        try:
+            mission = Mission.objects.get(id=mission_id)
+        except Mission.DoesNotExist:
+            return Response({"error": "Mission introuvable."}, status=404)
+
+        if mission.position_livreur_lat is None or mission.position_livreur_lng is None:
+            return Response({"error": "Position non disponible."}, status=404)
+
+        return Response({
+            "latitude": mission.position_livreur_lat,
+            "longitude": mission.position_livreur_lng,
+            "mise_a_jour_le": mission.position_mise_a_jour_le,
+        })
+
+    def post(self, request, mission_id):
+        try:
+            mission = Mission.objects.get(id=mission_id, livreur=request.user)
+        except Mission.DoesNotExist:
+            return Response(
+                {"error": "Mission introuvable ou vous n'êtes pas le livreur assigné."},
+                status=403,
+            )
+
+        try:
+            lat = float(request.data.get('latitude'))
+            lng = float(request.data.get('longitude'))
+        except (TypeError, ValueError):
+            return Response({"error": "latitude et longitude requis (nombres)."}, status=400)
+
+        mission.position_livreur_lat = lat
+        mission.position_livreur_lng = lng
+        mission.position_mise_a_jour_le = timezone.now()
+        mission.save(update_fields=[
+            'position_livreur_lat', 'position_livreur_lng', 'position_mise_a_jour_le',
+        ])
+        return Response({"status": "position mise à jour"})
 
 
 # =========================================================

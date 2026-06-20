@@ -3,9 +3,11 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     UtilisateurViewSet, AcheteurViewSet, VendeurViewSet, ProduitViewSet,
     LivreurViewSet, CommandeViewSet, VilleViewSet,
+    FinancerCommandeView, DecaisserCommandeView,
     MissionCreateView, MissionListView, MissionsDisponiblesListView,
     MesMissionsListView, MissionDetailUpdateView, accepter_mission,
     valider_livraison, DeclarerIncidentView,
+    MissionDestinationView, MissionPositionView,
     mon_profil, NotificationListView,
     MonPortefeuilleView, SimulerDepotView,
     RegisterView, LoginView, AuthMeView,
@@ -39,6 +41,10 @@ urlpatterns = [
     path('missions/<int:mission_id>/accepter/', accepter_mission, name='mission-accepter'),
     path('missions/<int:mission_id>/valider/', valider_livraison, name='valider-livraison'),
     path('missions/<int:mission_id>/incident/', DeclarerIncidentView.as_view(), name='declarer-incident'),
+    path('missions/<int:mission_id>/destination/', MissionDestinationView.as_view(), name='mission-destination'),
+    path('missions/<int:mission_id>/position/', MissionPositionView.as_view(), name='mission-position'),
+    path('commandes/<int:commande_id>/financer/', FinancerCommandeView.as_view(), name='commande-financer'),
+    path('commandes/<int:commande_id>/decaisser/', DecaisserCommandeView.as_view(), name='commande-decaisser'),
 
     # Chat
     path('chat/commande/<int:commande_id>/', ConversationCommandeView.as_view(), name='chat-commande'),

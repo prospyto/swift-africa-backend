@@ -20,6 +20,8 @@ class Utilisateur(AbstractUser):
 class Ville(models.Model):
     nom = models.CharField(max_length=100, unique=True)
     distance_reference = models.FloatField(help_text="Distance en KM depuis le centre logistique")
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
     def __str__(self): return self.nom
 
 # --- 3. COMMERCE & LOGISTIQUE ---
@@ -50,20 +52,52 @@ class Livreur(models.Model):
 
 # --- 4. LES COMMANDES ---
 class Commande(models.Model):
+    """
+    Une commande représente le panier validé par un acheteur. Elle peut
+    contenir plusieurs produits (voir LigneCommande) et suit un cycle de
+    vie complet de type escrow :
+      en_attente -> finance -> en_livraison -> livre -> decaisse
+    """
     STATUT_CHOICES = [
-        ('En attente', 'En attente'),
-        ('Confirmée', 'Confirmée'),
-        ('Livrée', 'Livrée'),
+        ('en_attente', 'En attente de paiement'),
+        ('finance', 'Financée (en escrow)'),
+        ('en_livraison', 'En livraison'),
+        ('livre', 'Livrée'),
+        ('decaisse', 'Décaissée'),
     ]
-    acheteur = models.ForeignKey(Acheteur, on_delete=models.CASCADE)
+    acheteur = models.ForeignKey(Acheteur, on_delete=models.CASCADE, related_name='commandes')
+    ville_depart = models.ForeignKey(Ville, on_delete=models.PROTECT, related_name='commandes_depart', null=True, blank=True)
+    ville_arrivee = models.ForeignKey(Ville, on_delete=models.PROTECT, related_name='commandes_arrivee', null=True, blank=True)
+    total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    otp = models.CharField(max_length=4, blank=True)
+    statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default='en_attente')
+    note_donnee = models.BooleanField(default=False)
+    cree_le = models.DateTimeField(auto_now_add=True)
+    mis_a_jour_le = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        if not self.otp:
+            self.otp = str(random.randint(1000, 9999))
+        super().save(*args, **kwargs)
+
+    def __str__(self): return f"Commande {self.id} - {self.statut} ({self.total} FCFA)"
+
+
+class LigneCommande(models.Model):
+    """Une ligne de produit dans une commande (panier multi-articles)."""
+    commande = models.ForeignKey(Commande, on_delete=models.CASCADE, related_name='lignes')
     produit = models.ForeignKey(Produit, on_delete=models.CASCADE)
     quantite = models.PositiveIntegerField(default=1)
-    date_commande = models.DateTimeField(auto_now_add=True)
-    statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default='En attente')
-    def __str__(self): return f"Commande {self.id} - {self.produit.nom}"
+    prix_unitaire = models.DecimalField(max_digits=10, decimal_places=2)
+
+    def __str__(self): return f"{self.quantite}x {self.produit.nom}"
 
 # --- 5. LES MISSIONS ---
 class Mission(models.Model):
+    commande = models.OneToOneField(
+        Commande, on_delete=models.CASCADE, related_name='mission',
+        null=True, blank=True,
+    )
     vendeur = models.ForeignKey(Utilisateur, on_delete=models.CASCADE, related_name='missions_creees', null=True, blank=True)
     livreur = models.ForeignKey(Utilisateur, on_delete=models.SET_NULL, null=True, blank=True, related_name='missions_acceptees')
     ville_depart = models.ForeignKey(Ville, on_delete=models.PROTECT, related_name='departs', null=True, blank=True)
@@ -74,6 +108,12 @@ class Mission(models.Model):
     prix_livraison = models.DecimalField(max_digits=10, decimal_places=2, editable=False)
     code_validation = models.CharField(max_length=4, blank=True)
     statut = models.CharField(max_length=20, default='attente')
+
+    # Position en temps réel du livreur, mise à jour régulièrement depuis
+    # son téléphone pendant la livraison (voir MissionPositionView).
+    position_livreur_lat = models.FloatField(null=True, blank=True)
+    position_livreur_lng = models.FloatField(null=True, blank=True)
+    position_mise_a_jour_le = models.DateTimeField(null=True, blank=True)
 
     def save(self, *args, **kwargs):
         try:
@@ -130,6 +170,7 @@ class Wallet(models.Model):
 class Transaction(models.Model):
     TYPE_CHOICES = [
         ('DEPOT', 'Dépôt Mobile Money'), ('RETRAIT', 'Retrait Mobile Money'),
+        ('ESCROW', 'Mise en Escrow (Commande Financée)'),
         ('GAIN_LIVRAISON', 'Gain de Livraison'), ('COMMISSION', 'Commission Application'),
         ('REMBOURSEMENT', 'Remboursement Client'), ('LITIGE', 'Litige / Course Bloquée'),
     ]
