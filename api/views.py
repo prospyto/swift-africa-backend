@@ -1,6 +1,6 @@
 from decimal import Decimal
 from django.db import transaction
-from rest_framework import viewsets, generics, status
+from rest_framework import viewsets, generics, status, serializers
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
@@ -69,12 +69,11 @@ class ProduitViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         try:
             vendeur_profil = self.request.user.profil_vendeur
-            serializer.save(vendeur=vendeur_profil)
         except Vendeur.DoesNotExist:
-            return Response(
-                {"error": "Vous n'avez pas de profil vendeur."},
-                status=status.HTTP_400_BAD_REQUEST
+            raise serializers.ValidationError(
+                {"error": "Vous n'avez pas de profil vendeur. Créez-en un d'abord."}
             )
+        serializer.save(vendeur=vendeur_profil)
 
 class CommandeViewSet(viewsets.ModelViewSet):
     queryset = Commande.objects.all()

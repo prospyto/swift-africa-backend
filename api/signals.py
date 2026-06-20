@@ -9,11 +9,24 @@ from django.dispatch import receiver
 @receiver(post_save, sender='api.Utilisateur')
 def mapper_portefeuille_utilisateur(sender, instance, created, **kwargs):
     """
-    Crée automatiquement un Wallet dès qu'un nouvel Utilisateur est inscrit.
+    Crée automatiquement un Wallet, ainsi que les profils
+    Acheteur/Vendeur/Livreur correspondants aux rôles activés, dès
+    qu'un nouvel Utilisateur est inscrit. Sans ces profils, toute
+    action liée au rôle (ex: un vendeur qui ajoute un produit)
+    échoue car le reste de l'API s'appuie sur user.profil_vendeur,
+    user.profil_acheteur, user.profil_livreur.
     """
     if created:
-        from .models import Wallet  # Import local sécurisé
+        from .models import Wallet, Acheteur, Vendeur, Livreur  # Import local sécurisé
         Wallet.objects.create(utilisateur=instance)
+
+        if instance.est_acheteur and not Acheteur.objects.filter(user=instance).exists():
+            Acheteur.objects.create(user=instance, adresse='')
+        if instance.est_vendeur and not Vendeur.objects.filter(user=instance).exists():
+            nom_boutique = f"Boutique de {instance.first_name or instance.username}"
+            Vendeur.objects.create(user=instance, boutique=nom_boutique)
+        if instance.est_livreur and not Livreur.objects.filter(user=instance).exists():
+            Livreur.objects.create(user=instance)
 
 
 # ==========================================================

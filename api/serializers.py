@@ -211,5 +211,17 @@ class RegisterSerializer(serializers.ModelSerializer):
         )
         user.set_password(password)
         user.save()
+
+        # Chaque rôle a un profil dédié (Acheteur/Vendeur/Livreur), requis
+        # par le reste de l'API (ex: ProduitViewSet.perform_create attend
+        # user.profil_vendeur). Sans ça, l'inscription réussit mais toute
+        # action liée au rôle échoue avec une erreur 500.
+        if role == 'acheteur':
+            Acheteur.objects.create(user=user, adresse='')
+        elif role == 'vendeur':
+            Vendeur.objects.create(user=user, boutique=f"Boutique de {prenom}")
+        elif role == 'livreur':
+            Livreur.objects.create(user=user)
+
         return user
 
