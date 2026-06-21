@@ -92,8 +92,17 @@ class CommandeViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     def get_queryset(self):
         user = self.request.user
+        # Acheteur : ses propres commandes
         if hasattr(user, 'profil_acheteur'):
             return Commande.objects.filter(acheteur=user.profil_acheteur)
+        # Vendeur : commandes contenant au moins un de ses produits
+        if hasattr(user, 'profil_vendeur'):
+            return Commande.objects.filter(
+                lignes__produit__vendeur=user.profil_vendeur
+            ).distinct()
+        # Livreur : commandes liées à une mission qui lui est assignée
+        if hasattr(user, 'profil_livreur'):
+            return Commande.objects.filter(mission__livreur=user)
         return Commande.objects.none()
     def perform_create(self, serializer):
         serializer.save(acheteur=self.request.user.profil_acheteur)
