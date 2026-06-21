@@ -301,14 +301,42 @@ class ConversationCommandeView(APIView):
 
 
 class MessagesNonLusView(APIView):
-    """GET /chat/non-lus/ → nombre total de messages non lus pour l'utilisateur connecté"""
+    """
+    GET /chat/non-lus/ → nombre total de messages non lus + détail par conversation.
+    Utilisé par le bouton cloche de la navbar.
+    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        count = MessageChat.objects.filter(
-            conversation__participants=request.user
-        ).exclude(lu_par=request.user).exclude(auteur=request.user).count()
-        return Response({"non_lus": count})
+        user = request.user
+        # Total non lus
+        total = MessageChat.objects.filter(
+            conversation__participants=user
+        ).exclude(lu_par=user).exclude(auteur=user).count()
+
+        # Détail par conversation (pour le panel déroulant)
+        conversations = []
+        convs = ConversationCommande.objects.filter(
+            participants=user
+        ).prefetch_related('messages', 'messages__lu_par')
+
+        for conv in convs:
+            non_lus = conv.messages.exclude(lu_par=user).exclude(auteur=user).count()
+            if non_lus == 0:
+                continue
+            dernier = conv.messages.order_by('-envoye_le').first()
+            if not dernier:
+                continue
+            auteur = dernier.auteur
+            nom = f"{auteur.first_name} {auteur.last_name}".strip() or auteur.username
+            conversations.append({
+                "commande_id": conv.commande_id,
+                "non_lus": non_lus,
+                "dernier_message": dernier.contenu[:60],
+                "dernier_auteur": nom,
+            })
+
+        return Response({"non_lus": total, "conversations": conversations})
 
 
 # =========================================================
