@@ -248,21 +248,26 @@ class ConversationCommandeView(APIView):
         except Commande.DoesNotExist:
             return None, Response({"error": "Commande introuvable."}, status=404)
 
-        conv, created = ConversationCommande.objects.get_or_create(commande=commande)
+        # Vérifier que l'utilisateur est bien lié à cette commande
+        est_acheteur = hasattr(user, 'profil_acheteur') and commande.acheteur == user.profil_acheteur
+        est_vendeur = hasattr(user, 'profil_vendeur') and commande.lignes.filter(
+            produit__vendeur=user.profil_vendeur
+        ).exists()
+        est_livreur = hasattr(commande, 'mission') and commande.mission.livreur == user
+        if not (est_acheteur or est_vendeur or est_livreur):
+            return None, Response({"error": "Accès non autorisé à cette conversation."}, status=403)
 
-        # Ajouter automatiquement les participants : acheteur, vendeur du produit, livreur de la mission
-        participants = set()
-        participants.add(commande.acheteur.user)
-        participants.add(commande.produit.vendeur.user)
-        # Ajouter le livreur si une mission existe pour cette commande
-        # (on cherche via vendeur qui est l'expéditeur de la mission)
-        if created:
-            for p in participants:
-                conv.participants.add(p)
+        conv, _ = ConversationCommande.objects.get_or_create(commande=commande)
 
-        # Vérifier que l'utilisateur connecté est bien participant
-        if user not in conv.participants.all():
-            conv.participants.add(user)
+        # Synchroniser les participants à chaque appel (robuste aux ajouts tardifs)
+        # Acheteur
+        conv.participants.add(commande.acheteur.user)
+        # Vendeur(s) — une commande peut avoir des produits de plusieurs vendeurs
+        for ligne in commande.lignes.select_related('produit__vendeur__user'):
+            conv.participants.add(ligne.produit.vendeur.user)
+        # Livreur si une mission est assignée
+        if hasattr(commande, 'mission') and commande.mission.livreur:
+            conv.participants.add(commande.mission.livreur)
 
         return conv, None
 
