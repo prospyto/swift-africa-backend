@@ -118,6 +118,11 @@ class FinancerCommandeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, commande_id):
+        if not hasattr(request.user, 'profil_acheteur'):
+            return Response(
+                {"error": "Seul un acheteur peut financer une commande."},
+                status=403,
+            )
         try:
             commande = Commande.objects.get(
                 id=commande_id, acheteur=request.user.profil_acheteur,
@@ -177,6 +182,11 @@ class DecaisserCommandeView(APIView):
     COMMISSION_LIVREUR = Decimal('0.08')  # 8% du prix de livraison de la mission
 
     def post(self, request, commande_id):
+        if not hasattr(request.user, 'profil_acheteur'):
+            return Response(
+                {"error": "Seul un acheteur peut décaisser une commande."},
+                status=403,
+            )
         try:
             commande = Commande.objects.get(
                 id=commande_id, acheteur=request.user.profil_acheteur,
