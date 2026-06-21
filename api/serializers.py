@@ -4,6 +4,7 @@ from .models import (
     Utilisateur, Acheteur, Vendeur, Produit, Livreur, Commande, LigneCommande,
     Notification, Mission, Ville, Wallet, Transaction,
     ConversationCommande, MessageChat,
+    Notation,
 )
 from .image_utils import optimize_product_image
 
@@ -351,3 +352,14 @@ class RegisterSerializer(serializers.ModelSerializer):
         # profil Acheteur/Vendeur/Livreur correspondant au rôle.
         return user
 
+class NotationSerializer(serializers.ModelSerializer):
+    noteur_nom = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Notation
+        fields = ['id', 'commande', 'type_note', 'noteur_nom', 'note', 'commentaire', 'cree_le']
+        read_only_fields = ['id', 'noteur_nom', 'cree_le']
+
+    def get_noteur_nom(self, obj):
+        u = obj.noteur
+        return f"{u.first_name} {u.last_name}".strip() or u.username

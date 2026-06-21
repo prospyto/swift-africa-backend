@@ -11,7 +11,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .models import (
     Utilisateur, Acheteur, Vendeur, Produit, Livreur, Commande,
     Notification, Mission, Ville, Wallet, Transaction,
-    ConversationCommande, MessageChat,
+    ConversationCommande, MessageChat, Notation,
 )
 from .serializers import (
     UtilisateurSerializer, AcheteurSerializer, VendeurSerializer,
@@ -19,7 +19,7 @@ from .serializers import (
     NotificationSerializer, MissionSerializer, VilleSerializer,
     WalletSerializer, TransactionSerializer,
     AuthUserSerializer, RegisterSerializer,
-    ConversationSerializer, MessageChatSerializer,
+    ConversationSerializer, MessageChatSerializer, NotationSerializer,
 )
 from .permissions import IsOwnerOrReadOnly
 
@@ -620,3 +620,72 @@ class SimulerDepotView(APIView):
         wallet.save()
         return Response({"message": f"Dépôt de {montant} FCFA effectué.", "nouveau_solde": wallet.solde,
                          "transaction": TransactionSerializer(t).data}, status=201)
+
+class NoterView(APIView):
+    """
+    POST /commandes/{id}/noter/
+    Corps : { type_note: 'acheteur_vendeur'|'vendeur_livreur', note: 1-5, commentaire?: str }
+
+    Règles :
+    - La commande doit être 'decaisse'
+    - acheteur_vendeur : seul l'acheteur peut noter le vendeur
+    - vendeur_livreur  : seul un vendeur impliqué dans la commande peut noter le livreur
+    - Une notation par type par commande (unicité en base)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, commande_id):
+        try:
+            commande = Commande.objects.get(id=commande_id)
+        except Commande.DoesNotExist:
+            return Response({'error': 'Commande introuvable.'}, status=404)
+
+        if commande.statut != 'decaisse':
+            return Response({'error': 'La commande doit être décaissée pour être notée.'}, status=400)
+
+        type_note = request.data.get('type_note')
+        note_val  = request.data.get('note')
+        commentaire = request.data.get('commentaire', '')
+
+        if type_note not in ('acheteur_vendeur', 'vendeur_livreur'):
+            return Response({'error': 'type_note invalide.'}, status=400)
+        try:
+            note_val = int(note_val)
+            if not (1 <= note_val <= 5):
+                raise ValueError
+        except (TypeError, ValueError):
+            return Response({'error': 'La note doit être entre 1 et 5.'}, status=400)
+
+        user = request.user
+
+        # Vérifier les droits selon le type de notation
+        if type_note == 'acheteur_vendeur':
+            if not hasattr(user, 'profil_acheteur') or commande.acheteur != user.profil_acheteur:
+                return Response({'error': 'Seul l\'acheteur peut noter le vendeur.'}, status=403)
+        else:  # vendeur_livreur
+            if not hasattr(user, 'profil_vendeur'):
+                return Response({'error': 'Seul un vendeur peut noter le livreur.'}, status=403)
+            if not commande.lignes.filter(produit__vendeur=user.profil_vendeur).exists():
+                return Response({'error': 'Vous n\'êtes pas vendeur sur cette commande.'}, status=403)
+            if not hasattr(commande, 'mission') or not commande.mission.livreur:
+                return Response({'error': 'Aucun livreur assigné à cette commande.'}, status=400)
+
+        notation, created = Notation.objects.get_or_create(
+            commande=commande,
+            type_note=type_note,
+            defaults={'noteur': user, 'note': note_val, 'commentaire': commentaire},
+        )
+        if not created:
+            return Response({'error': 'Vous avez déjà noté cette commande.'}, status=400)
+
+        # Marquer note_donnee sur la commande si acheteur vient de noter
+        if type_note == 'acheteur_vendeur':
+            commande.note_donnee = True
+            commande.save(update_fields=['note_donnee'])
+
+        return Response(NotationSerializer(notation).data, status=201)
+
+    def get(self, request, commande_id):
+        """Récupère les notations existantes pour une commande."""
+        notations = Notation.objects.filter(commande_id=commande_id)
+        return Response(NotationSerializer(notations, many=True).data)

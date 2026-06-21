@@ -9,7 +9,7 @@ from .views import (
     valider_livraison, DeclarerIncidentView,
     MissionDestinationView, MissionPositionView,
     mon_profil, NotificationListView,
-    MonPortefeuilleView, SimulerDepotView,
+    MonPortefeuilleView, SimulerDepotView, NoterView,
     RegisterView, LoginView, AuthMeView,
     ConversationCommandeView, MessagesNonLusView,
 )
@@ -55,4 +55,5 @@ urlpatterns = [
     path('notifications/', NotificationListView.as_view(), name='notifications'),
     path('portefeuille/', MonPortefeuilleView.as_view(), name='mon-portefeuille'),
     path('portefeuille/depot-simulation/', SimulerDepotView.as_view(), name='simuler-depot'),
+    path('commandes/<int:commande_id>/noter/', NoterView.as_view(), name='noter-commande'),
 ]

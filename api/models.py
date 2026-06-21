@@ -182,3 +182,29 @@ class Transaction(models.Model):
     reference_externe = models.CharField(max_length=100, blank=True, null=True)
     cree_le = models.DateTimeField(auto_now_add=True)
     def __str__(self): return f"{self.type_transaction} - {self.montant} FCFA ({self.statut})"
+
+# --- 9. NOTATIONS ---
+class Notation(models.Model):
+    """
+    Système de notation à double sens :
+    - Acheteur note le Vendeur (après décaissement)
+    - Vendeur note le Livreur (après décaissement)
+    Une seule notation par commande par type (unicité enforced).
+    """
+    TYPE_CHOICES = [
+        ('acheteur_vendeur', 'Acheteur → Vendeur'),
+        ('vendeur_livreur',  'Vendeur → Livreur'),
+    ]
+    commande    = models.ForeignKey(Commande, on_delete=models.CASCADE, related_name='notations')
+    type_note   = models.CharField(max_length=20, choices=TYPE_CHOICES)
+    noteur      = models.ForeignKey(Utilisateur, on_delete=models.CASCADE, related_name='notes_donnees')
+    note        = models.PositiveSmallIntegerField()   # 1 à 5
+    commentaire = models.TextField(blank=True)
+    cree_le     = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [('commande', 'type_note')]
+        ordering = ['-cree_le']
+
+    def __str__(self):
+        return f"{self.type_note} — {self.note}/5 (commande #{self.commande_id})"
