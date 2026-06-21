@@ -44,12 +44,33 @@ class LivreurSerializer(serializers.ModelSerializer):
 
 class ProduitSerializer(serializers.ModelSerializer):
     vendeur_nom = serializers.SerializerMethodField()
+    ville = serializers.CharField(required=False, allow_blank=True)
+
     class Meta:
         model = Produit
         fields = ['id', 'nom', 'description', 'prix', 'prix_solde', 'image', 'categorie', 'ville', 'vendeur', 'vendeur_nom', 'cree_le', 'mis_a_jour_le']
         read_only_fields = ['vendeur', 'cree_le', 'mis_a_jour_le']
+
     def get_vendeur_nom(self, obj):
         return obj.vendeur.boutique if obj.vendeur else None
+
+    def to_internal_value(self, data):
+        ret = super().to_internal_value(data)
+        nom_ville = ret.get('ville')
+        if nom_ville:
+            ville_obj, _ = Ville.objects.get_or_create(
+                nom=nom_ville, defaults={'distance_reference': 0}
+            )
+            ret['ville'] = ville_obj
+        else:
+            ret.pop('ville', None)
+        return ret
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['ville'] = instance.ville.nom if instance.ville else None
+        return data
+
     def create(self, validated_data):
         if 'image' in validated_data and validated_data['image']:
             validated_data['image'] = optimize_product_image(validated_data['image'])
@@ -86,8 +107,14 @@ class CommandeSerializer(serializers.ModelSerializer):
     ville_depart_nom = serializers.ReadOnlyField(source='ville_depart.nom')
     ville_arrivee_nom = serializers.ReadOnlyField(source='ville_arrivee.nom')
     livreur_nom = serializers.SerializerMethodField()
+    mission_id = serializers.SerializerMethodField()
 
-    # Champs d'écriture uniquement, pour construire le panier à la création
+    # Champ d'écriture uniquement, pour construire le panier à la création
+    # ([{id, quantite}, ...] envoyé par checkout() côté frontend). En
+    # lecture, to_representation ci-dessous remplace ce champ par le
+    # panier au format CartItem[] ({product, quantite}) attendu par le
+    # frontend — pas de collision malgré le nom partagé, write_only
+    # exclut ce champ de la sortie JSON.
     produits = serializers.ListField(child=serializers.DictField(), write_only=True)
 
     # Le frontend envoie le nom de la ville (texte libre), pas son id.
@@ -100,13 +127,28 @@ class CommandeSerializer(serializers.ModelSerializer):
             'id', 'acheteur', 'ville_depart', 'ville_depart_nom',
             'ville_arrivee', 'ville_arrivee_nom', 'total', 'otp', 'statut',
             'note_donnee', 'cree_le', 'mis_a_jour_le', 'lignes', 'produits',
-            'livreur_nom',
+            'livreur_nom', 'mission_id',
         ]
         read_only_fields = ['acheteur', 'total', 'otp', 'statut', 'note_donnee']
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['produits'] = [
+            {
+                'product': ProduitSerializer(ligne.produit, context=self.context).data,
+                'quantite': ligne.quantite,
+            }
+            for ligne in instance.lignes.select_related('produit', 'produit__vendeur__user')
+        ]
+        return data
 
     def get_livreur_nom(self, obj):
         mission = getattr(obj, 'mission', None)
         return mission.livreur.username if mission and mission.livreur else None
+
+    def get_mission_id(self, obj):
+        mission = getattr(obj, 'mission', None)
+        return mission.id if mission else None
 
     def validate_produits(self, value):
         if not value:

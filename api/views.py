@@ -61,8 +61,18 @@ class LivreurViewSet(viewsets.ModelViewSet):
 # PRODUITS / COMMANDES
 # =========================================================
 class ProduitViewSet(viewsets.ModelViewSet):
-    queryset = Produit.objects.all()
     serializer_class = ProduitSerializer
+    def get_queryset(self):
+        # Le catalogue public (acheteurs, visiteurs non connectés) voit
+        # tous les produits. Un vendeur connecté qui consulte SES
+        # produits (paramètre ?mine=1, utilisé par SellerSpace) ne voit
+        # que les siens.
+        if self.request.query_params.get('mine') == '1' and self.request.user.is_authenticated:
+            try:
+                return Produit.objects.filter(vendeur=self.request.user.profil_vendeur)
+            except Vendeur.DoesNotExist:
+                return Produit.objects.none()
+        return Produit.objects.all()
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [AllowAny()]
