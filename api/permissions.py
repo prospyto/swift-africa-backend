@@ -10,6 +10,8 @@ class IsOwnerOrReadOnly(permissions.BasePermission):
         if request.method in permissions.SAFE_METHODS:
             return True
 
-        # Le droit d'écriture est autorisé uniquement si le vendeur est le propriétaire
-        # On suppose que ton modèle Produit a un champ 'vendeur'
-        return obj.vendeur == request.user
+        # Le droit d'écriture est autorisé uniquement si le vendeur est le propriétaire.
+        # obj.vendeur est un profil Vendeur (OneToOne vers Utilisateur),
+        # pas l'Utilisateur lui-même — comparer obj.vendeur == request.user
+        # serait toujours faux.
+        return obj.vendeur and obj.vendeur.user == request.user
