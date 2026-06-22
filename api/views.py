@@ -72,7 +72,8 @@ class ProduitViewSet(viewsets.ModelViewSet):
                 return Produit.objects.filter(vendeur=self.request.user.profil_vendeur)
             except Vendeur.DoesNotExist:
                 return Produit.objects.none()
-        return Produit.objects.all()
+        # Catalogue public : seulement les produits liés à un vrai vendeur
+        return Produit.objects.filter(vendeur__isnull=False)
     def get_permissions(self):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [AllowAny()]
