@@ -45,12 +45,26 @@ class LivreurSerializer(serializers.ModelSerializer):
 
 class ProduitSerializer(serializers.ModelSerializer):
     vendeur_nom = serializers.SerializerMethodField()
+    image_url = serializers.SerializerMethodField()
     ville = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = Produit
-        fields = ['id', 'nom', 'description', 'prix', 'prix_solde', 'image', 'categorie', 'ville', 'vendeur', 'vendeur_nom', 'cree_le', 'mis_a_jour_le']
+        fields = ['id', 'nom', 'description', 'prix', 'prix_solde', 'image', 'image_url', 'categorie', 'ville', 'vendeur', 'vendeur_nom', 'cree_le', 'mis_a_jour_le']
         read_only_fields = ['vendeur', 'cree_le', 'mis_a_jour_le']
+
+    def get_image_url(self, obj):
+        """Retourne toujours une URL absolue — Cloudinary ou fallback."""""
+        if not obj.image:
+            return None
+        url = obj.image.url
+        # Si c'est déjà une URL absolue Cloudinary → OK
+        if url.startswith('http'):
+            return url
+        # Sinon construire l'URL absolue depuis BACKEND_URL
+        import os
+        backend_url = os.environ.get('BACKEND_URL', 'https://swift-africa-backend.onrender.com')
+        return f"{backend_url}{url}"
 
     def get_vendeur_nom(self, obj):
         return obj.vendeur.boutique if obj.vendeur else None
