@@ -183,17 +183,23 @@ class DecaisserCommandeView(APIView):
     COMMISSION_LIVREUR = Decimal('0.08')  # 8% du prix de livraison de la mission
 
     def post(self, request, commande_id):
-        if not hasattr(request.user, 'profil_acheteur'):
+        # Seul un vendeur impliqué dans la commande peut décaisser
+        if not hasattr(request.user, 'profil_vendeur'):
             return Response(
-                {"error": "Seul un acheteur peut décaisser une commande."},
+                {"error": "Seul un vendeur peut décaisser une commande."},
                 status=403,
             )
         try:
-            commande = Commande.objects.get(
-                id=commande_id, acheteur=request.user.profil_acheteur,
-            )
+            commande = Commande.objects.get(id=commande_id)
         except Commande.DoesNotExist:
             return Response({"error": "Commande introuvable."}, status=404)
+
+        # Vérifier que ce vendeur a bien des produits dans cette commande
+        if not commande.lignes.filter(produit__vendeur=request.user.profil_vendeur).exists():
+            return Response(
+                {"error": "Vous n'êtes pas vendeur sur cette commande."},
+                status=403,
+            )
 
         if commande.statut != 'livre':
             return Response(
@@ -432,7 +438,14 @@ def valider_livraison(request, mission_id):
             commande.statut = 'livre'
             commande.save(update_fields=['statut'])
 
-    return Response({"status": "success", "message": "Livraison validée !"})
+    # Retourner la commande mise à jour pour que le frontend raffraîchisse
+    from .serializers import CommandeSerializer
+    serializer = CommandeSerializer(commande)
+    return Response({
+        "status": "success",
+        "message": "Livraison validée !",
+        "commande": serializer.data,
+    })
 
 class DeclarerIncidentView(APIView):
     permission_classes = [IsAuthenticated]
