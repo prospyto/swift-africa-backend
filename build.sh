@@ -8,6 +8,9 @@ echo "=== Migrations base de données ==="
 python manage.py migrate --noinput
 
 echo "=== Fichiers statiques ==="
-python manage.py collectstatic --noinput
+python manage.py collectstatic --noinput --clear
 
-echo "=== Build terminé ==="
+echo "=== Vérification de l'API ==="
+python manage.py check
+
+echo "=== Build terminé avec succès ==="
