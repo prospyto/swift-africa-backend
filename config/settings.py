@@ -91,7 +91,7 @@ USE_TZ = True
 # ─── FICHIERS STATIQUES ────────────────────────────────────────
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-# STATICFILES_STORAGE déplacé dans STORAGES ci-dessous
+
 
 # ─── IMAGES — CLOUDINARY ───────────────────────────────────────
 CLOUDINARY_STORAGE = {
@@ -100,15 +100,11 @@ CLOUDINARY_STORAGE = {
     'API_SECRET': os.environ.get('CLOUDINARY_API_SECRET', ''),
 }
 
-# Django 4.2+ utilise STORAGES au lieu de DEFAULT_FILE_STORAGE
-STORAGES = {
-    'default': {
-        'BACKEND': 'cloudinary_storage.storage.MediaCloudinaryStorage',
-    },
-    'staticfiles': {
-        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
-    },
-}
+# Stockage des fichiers media → Cloudinary
+DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+
+# Fichiers statiques → Whitenoise
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 MEDIA_URL = '/media/'
 
