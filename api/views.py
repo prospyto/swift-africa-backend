@@ -172,15 +172,55 @@ class FinancerCommandeView(APIView):
         return Response(CommandeSerializer(commande).data)
 
 
+COMMISSION_APP_DEFAUT = Decimal('0.12')
+COMMISSION_LIVREUR_DEFAUT = Decimal('0.08')
+
+
+def _decaisser_commande(commande):
+    """
+    Crédite le(s) vendeur(s) et le livreur d'une commande livrée, et
+    passe son statut à 'decaisse'. Factorisé pour être appelé aussi
+    bien automatiquement (validation du code OTP) que manuellement
+    (DecaisserCommandeView, conservée comme filet de sécurité).
+    Suppose déjà commande.statut == 'livre' — ne revérifie pas l'état
+    pour permettre l'enchaînement direct depuis valider_livraison.
+    """
+    for ligne in commande.lignes.select_related('produit__vendeur__user'):
+        montant_ligne = ligne.prix_unitaire * ligne.quantite
+        part_vendeur = montant_ligne * (1 - COMMISSION_APP_DEFAUT)
+        vendeur_user = ligne.produit.vendeur.user
+        wallet_vendeur, _ = Wallet.objects.get_or_create(utilisateur=vendeur_user)
+        wallet_vendeur.solde += part_vendeur
+        wallet_vendeur.save(update_fields=['solde'])
+        Transaction.objects.create(
+            wallet=wallet_vendeur, type_transaction='GAIN_LIVRAISON',
+            montant=part_vendeur, statut='SUCCES',
+            reference_externe=f"VENTE-COMMANDE-{commande.id}-LIGNE-{ligne.id}",
+        )
+
+    mission = getattr(commande, 'mission', None)
+    if mission and mission.livreur:
+        gain_livreur = mission.prix_livraison * COMMISSION_LIVREUR_DEFAUT
+        wallet_livreur, _ = Wallet.objects.get_or_create(utilisateur=mission.livreur)
+        wallet_livreur.solde += gain_livreur
+        wallet_livreur.save(update_fields=['solde'])
+        Transaction.objects.create(
+            wallet=wallet_livreur, type_transaction='GAIN_LIVRAISON',
+            montant=gain_livreur, statut='SUCCES',
+            reference_externe=f"LIVRAISON-MISSION-{mission.id}",
+        )
+
+    commande.statut = 'decaisse'
+    commande.save(update_fields=['statut'])
+
+
 class DecaisserCommandeView(APIView):
     """
-    Décaisse une commande livrée : crédite le vendeur du montant des
-    produits (moins la commission appli) et le livreur de sa
-    commission de livraison.
+    Décaissement manuel — conservé comme filet de sécurité si jamais
+    le décaissement automatique (déclenché à la validation du code
+    OTP, voir valider_livraison) a échoué pour une raison quelconque.
     """
     permission_classes = [IsAuthenticated]
-    COMMISSION_APP = Decimal('0.12')  # 12% prélevés sur le montant produit
-    COMMISSION_LIVREUR = Decimal('0.08')  # 8% du prix de livraison de la mission
 
     def post(self, request, commande_id):
         # Seul un vendeur impliqué dans la commande peut décaisser
@@ -208,35 +248,7 @@ class DecaisserCommandeView(APIView):
             )
 
         with transaction.atomic():
-            # Paiement du/des vendeur(s), proportionnellement à leurs lignes
-            for ligne in commande.lignes.select_related('produit__vendeur__user'):
-                montant_ligne = ligne.prix_unitaire * ligne.quantite
-                part_vendeur = montant_ligne * (1 - self.COMMISSION_APP)
-                vendeur_user = ligne.produit.vendeur.user
-                wallet_vendeur, _ = Wallet.objects.get_or_create(utilisateur=vendeur_user)
-                wallet_vendeur.solde += part_vendeur
-                wallet_vendeur.save(update_fields=['solde'])
-                Transaction.objects.create(
-                    wallet=wallet_vendeur, type_transaction='GAIN_LIVRAISON',
-                    montant=part_vendeur, statut='SUCCES',
-                    reference_externe=f"VENTE-COMMANDE-{commande.id}-LIGNE-{ligne.id}",
-                )
-
-            # Paiement du livreur
-            mission = getattr(commande, 'mission', None)
-            if mission and mission.livreur:
-                gain_livreur = mission.prix_livraison * self.COMMISSION_LIVREUR
-                wallet_livreur, _ = Wallet.objects.get_or_create(utilisateur=mission.livreur)
-                wallet_livreur.solde += gain_livreur
-                wallet_livreur.save(update_fields=['solde'])
-                Transaction.objects.create(
-                    wallet=wallet_livreur, type_transaction='GAIN_LIVRAISON',
-                    montant=gain_livreur, statut='SUCCES',
-                    reference_externe=f"LIVRAISON-MISSION-{mission.id}",
-                )
-
-            commande.statut = 'decaisse'
-            commande.save(update_fields=['statut'])
+            _decaisser_commande(commande)
 
         return Response(CommandeSerializer(commande).data)
 
@@ -437,6 +449,10 @@ def valider_livraison(request, mission_id):
         if commande:
             commande.statut = 'livre'
             commande.save(update_fields=['statut'])
+            # Décaissement automatique : la page de vente promet un
+            # paiement "instantané" dès validation du code, sans étape
+            # manuelle supplémentaire pour l'acheteur.
+            _decaisser_commande(commande)
 
     # Retourner la commande mise à jour pour que le frontend raffraîchisse
     from .serializers import CommandeSerializer
