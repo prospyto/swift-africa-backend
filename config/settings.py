@@ -127,13 +127,14 @@ SIMPLE_JWT = {
 CORS_ALLOWED_ORIGINS = [
     'https://swift-africa-app-front-nine.vercel.app',
     'https://swift-africa-app-front.vercel.app',
+    'https://swift-africa-app.vercel.app',
     'http://localhost:3000',
     'http://localhost:3001',
     'http://127.0.0.1:3000',
 ]
 
 CORS_ALLOWED_ORIGIN_REGEXES = [
-    r'^https://swift-africa-app-front.*\.vercel\.app$',
+    r'^https://swift-africa-app(-front)?.*\.vercel\.app$',
 ]
 
 CORS_ALLOW_CREDENTIALS = True
