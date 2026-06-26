@@ -145,3 +145,4 @@ CORS_ALLOW_HEADERS = [
     'origin',
     'x-requested-with',
 ]
+
