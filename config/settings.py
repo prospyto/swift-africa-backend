@@ -100,11 +100,20 @@ CLOUDINARY_STORAGE = {
     'API_SECRET': os.environ.get('CLOUDINARY_API_SECRET', ''),
 }
 
-# Stockage des fichiers media → Cloudinary
-DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
-
-# Fichiers statiques → Whitenoise
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+# Django 5.1+ a supprimé le support de DEFAULT_FILE_STORAGE et
+# STATICFILES_STORAGE (dépréciés depuis 4.2) : ces réglages étaient
+# silencieusement ignorés avec Django 5.2.3, faisant retomber Django
+# sur le stockage fichier local par défaut (éphémère sur Render) sans
+# aucune erreur visible. STORAGES est la seule façon valide de
+# configurer le stockage media/statique sur cette version.
+STORAGES = {
+    "default": {
+        "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 MEDIA_URL = '/media/'
 
