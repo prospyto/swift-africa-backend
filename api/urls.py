@@ -1,3 +1,4 @@
+# CORS Force Redeploy v3
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
@@ -60,3 +61,4 @@ urlpatterns = [
     path('portefeuille/depot-simulation/', SimulerDepotView.as_view(), name='simuler-depot'),
     path('commandes/<int:commande_id>/noter/', NoterView.as_view(), name='noter-commande'),
 ]
+
