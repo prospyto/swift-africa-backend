@@ -111,9 +111,24 @@ STORAGES = {
         "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
     },
     "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
     },
 }
+
+# django-cloudinary-storage 0.3.0 accède encore directement à
+# settings.STATICFILES_STORAGE dans sa propre commande collectstatic
+# personnalisée (pas via le dict STORAGES), et plante avec une
+# AttributeError si ce réglage est totalement absent. On le garde en
+# parallèle de STORAGES, sans conflit : Django utilise STORAGES,
+# cette ligne sert uniquement à satisfaire ce contrôle interne de la
+# librairie tierce.
+#
+# Pas de compression whitenoise ici : cette API REST n'a quasiment
+# aucun fichier statique personnalisé (juste l'admin Django intégré),
+# et les variantes compressées de whitenoise plantaient sur des
+# fichiers admin standards (problème de résolution d'import CSS
+# relatif et/ou de timing de compression concurrente).
+STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.StaticFilesStorage'
 
 MEDIA_URL = '/media/'
 
