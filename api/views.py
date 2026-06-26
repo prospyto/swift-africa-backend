@@ -651,6 +651,58 @@ class SimulerDepotView(APIView):
         return Response({"message": f"Dépôt de {montant} FCFA effectué.", "nouveau_solde": wallet.solde,
                          "transaction": TransactionSerializer(t).data}, status=201)
 
+
+class MarquerPretCommandeView(APIView):
+    """
+    Le vendeur marque la commande comme 'Prête' — génère un OTP si absent
+    et rend visible la mission au livreur.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, commande_id):
+        if not hasattr(request.user, 'profil_vendeur'):
+            return Response(
+                {"error": "Seul un vendeur peut marquer une commande comme prête."},
+                status=403,
+            )
+        try:
+            commande = Commande.objects.get(id=commande_id)
+        except Commande.DoesNotExist:
+            return Response({"error": "Commande introuvable."}, status=404)
+
+        # Vérifier que ce vendeur a des produits dans cette commande
+        if not commande.lignes.filter(produit__vendeur=request.user.profil_vendeur).exists():
+            return Response(
+                {"error": "Vous n'êtes pas vendeur sur cette commande."},
+                status=403,
+            )
+
+        # La commande doit être financée
+        if commande.statut != 'finance':
+            return Response(
+                {"error": f"La commande doit être financée (actuel: {commande.statut})."},
+                status=400,
+            )
+
+        # Générer OTP si absent
+        if not commande.otp:
+            commande.otp = str(random.randint(1000, 9999))
+
+        # Marquer la mission comme visible (statut 'attente' → visible aux livreurs)
+        if hasattr(commande, 'mission'):
+            commande.mission.statut = 'attente'
+            commande.mission.save(update_fields=['statut'])
+
+        commande.save(update_fields=['otp'])
+
+        return Response({
+            "message": "Commande marquée comme prête.",
+            "otp": commande.otp,
+            "commande": CommandeSerializer(commande).data,
+        }, status=200)
+
+
+
 class NoterView(APIView):
     """
     POST /commandes/{id}/noter/
@@ -719,3 +771,4 @@ class NoterView(APIView):
         """Récupère les notations existantes pour une commande."""
         notations = Notation.objects.filter(commande_id=commande_id)
         return Response(NotationSerializer(notations, many=True).data)
+
