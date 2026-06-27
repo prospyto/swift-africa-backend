@@ -266,53 +266,90 @@ class VilleViewSet(viewsets.ModelViewSet):
 # =========================================================
 class ConversationCommandeView(APIView):
     """
-    GET  /chat/commande/{commande_id}/ → récupère (ou crée) la conversation
-    POST /chat/commande/{commande_id}/ → envoie un message
+    GET  /chat/commande/{commande_id}/avec/{autre_role}/ → récupère
+         (ou crée) la conversation PRIVÉE entre l'appelant et le
+         participant ayant le rôle {autre_role} ('acheteur', 'vendeur'
+         ou 'livreur') sur cette commande.
+    POST /chat/commande/{commande_id}/avec/{autre_role}/ → envoie un
+         message dans cette conversation précise.
+
+    Chaque paire de participants a sa propre conversation, isolée des
+    deux autres conversations possibles sur la même commande — un
+    vendeur qui ouvre ce endpoint avec autre_role='acheteur' n'a
+    jamais accès aux messages échangés entre l'acheteur et le
+    livreur, et inversement.
     """
     permission_classes = [IsAuthenticated]
+    ROLES_VALIDES = ('acheteur', 'vendeur', 'livreur')
 
-    def _get_or_create_conv(self, commande_id, user):
+    def _identifier_role(self, user, commande):
+        """Renvoie le rôle de `user` sur `commande`, ou None s'il n'y est pas impliqué."""
+        if hasattr(user, 'profil_acheteur') and commande.acheteur == user.profil_acheteur:
+            return 'acheteur'
+        if hasattr(user, 'profil_vendeur') and commande.lignes.filter(
+            produit__vendeur=user.profil_vendeur
+        ).exists():
+            return 'vendeur'
+        if hasattr(commande, 'mission') and commande.mission.livreur_id == user.id:
+            return 'livreur'
+        return None
+
+    def _trouver_participant_par_role(self, commande, role):
+        """Renvoie l'Utilisateur jouant `role` sur cette commande, ou None."""
+        if role == 'acheteur':
+            return commande.acheteur.user
+        if role == 'vendeur':
+            ligne = commande.lignes.select_related('produit__vendeur__user').first()
+            return ligne.produit.vendeur.user if ligne else None
+        if role == 'livreur':
+            mission = getattr(commande, 'mission', None)
+            return mission.livreur if mission else None
+        return None
+
+    def _get_or_create_conv(self, commande_id, autre_role, user):
+        if autre_role not in self.ROLES_VALIDES:
+            return None, None, Response({"error": "Rôle invalide."}, status=400)
+
         try:
             commande = Commande.objects.get(id=commande_id)
         except Commande.DoesNotExist:
-            return None, Response({"error": "Commande introuvable."}, status=404)
+            return None, None, Response({"error": "Commande introuvable."}, status=404)
 
-        # Vérifier que l'utilisateur est bien lié à cette commande
-        est_acheteur = hasattr(user, 'profil_acheteur') and commande.acheteur == user.profil_acheteur
-        est_vendeur = hasattr(user, 'profil_vendeur') and commande.lignes.filter(
-            produit__vendeur=user.profil_vendeur
-        ).exists()
-        est_livreur = hasattr(commande, 'mission') and commande.mission.livreur == user
-        if not (est_acheteur or est_vendeur or est_livreur):
-            return None, Response({"error": "Accès non autorisé à cette conversation."}, status=403)
+        mon_role = self._identifier_role(user, commande)
+        if mon_role is None:
+            return None, None, Response({"error": "Accès non autorisé à cette commande."}, status=403)
+        if mon_role == autre_role:
+            return None, None, Response(
+                {"error": "Vous ne pouvez pas discuter avec votre propre rôle."}, status=400,
+            )
 
-        conv, _ = ConversationCommande.objects.get_or_create(commande=commande)
+        autre_user = self._trouver_participant_par_role(commande, autre_role)
+        if autre_user is None:
+            return None, None, Response(
+                {"error": f"Aucun {autre_role} n'est encore assigné à cette commande."}, status=404,
+            )
 
-        # Synchroniser les participants à chaque appel (robuste aux ajouts tardifs)
-        # Acheteur
-        conv.participants.add(commande.acheteur.user)
-        # Vendeur(s) — une commande peut avoir des produits de plusieurs vendeurs
-        for ligne in commande.lignes.select_related('produit__vendeur__user'):
-            conv.participants.add(ligne.produit.vendeur.user)
-        # Livreur si une mission est assignée
-        if hasattr(commande, 'mission') and commande.mission.livreur:
-            conv.participants.add(commande.mission.livreur)
+        # Ordre normalisé (plus petit id en premier) pour garantir
+        # qu'une seule conversation existe par paire, peu importe qui
+        # initie l'échange en premier.
+        a, b = (user, autre_user) if user.id < autre_user.id else (autre_user, user)
+        conv, _ = ConversationCommande.objects.get_or_create(
+            commande=commande, participant_a=a, participant_b=b,
+        )
+        return conv, autre_user, None
 
-        return conv, None
-
-    def get(self, request, commande_id):
-        conv, err = self._get_or_create_conv(commande_id, request.user)
+    def get(self, request, commande_id, autre_role):
+        conv, _, err = self._get_or_create_conv(commande_id, autre_role, request.user)
         if err: return err
 
-        # Marquer tous les messages comme lus
         for msg in conv.messages.exclude(lu_par=request.user):
             msg.lu_par.add(request.user)
 
         serializer = ConversationSerializer(conv, context={'request': request})
         return Response(serializer.data)
 
-    def post(self, request, commande_id):
-        conv, err = self._get_or_create_conv(commande_id, request.user)
+    def post(self, request, commande_id, autre_role):
+        conv, _, err = self._get_or_create_conv(commande_id, autre_role, request.user)
         if err: return err
 
         contenu = request.data.get('contenu', '').strip()
@@ -338,16 +375,20 @@ class MessagesNonLusView(APIView):
 
     def get(self, request):
         user = request.user
+        from django.db.models import Q
+
+        mes_convs_qs = Q(participant_a=user) | Q(participant_b=user)
+
         # Total non lus
         total = MessageChat.objects.filter(
-            conversation__participants=user
+            conversation__in=ConversationCommande.objects.filter(mes_convs_qs)
         ).exclude(lu_par=user).exclude(auteur=user).count()
 
         # Détail par conversation (pour le panel déroulant)
         conversations = []
-        convs = ConversationCommande.objects.filter(
-            participants=user
-        ).prefetch_related('messages', 'messages__lu_par')
+        convs = ConversationCommande.objects.filter(mes_convs_qs).prefetch_related(
+            'messages', 'messages__lu_par',
+        )
 
         for conv in convs:
             non_lus = conv.messages.exclude(lu_par=user).exclude(auteur=user).count()
@@ -358,8 +399,15 @@ class MessagesNonLusView(APIView):
                 continue
             auteur = dernier.auteur
             nom = f"{auteur.first_name} {auteur.last_name}".strip() or auteur.username
+
+            autre = conv.autre_participant(user)
+            autre_role = 'acheteur'
+            if autre.est_vendeur: autre_role = 'vendeur'
+            if autre.est_livreur: autre_role = 'livreur'
+
             conversations.append({
                 "commande_id": conv.commande_id,
+                "avec_role": autre_role,
                 "non_lus": non_lus,
                 "dernier_message": dernier.contenu[:60],
                 "dernier_auteur": nom,

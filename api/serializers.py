@@ -290,7 +290,7 @@ class ConversationSerializer(serializers.ModelSerializer):
 
     def get_participants_info(self, obj):
         result = []
-        for u in obj.participants.all():
+        for u in obj.participants:
             role = 'acheteur'
             if u.est_vendeur: role = 'vendeur'
             if u.est_livreur: role = 'livreur'

@@ -130,12 +130,35 @@ class Mission(models.Model):
 
 # --- 6. CHAT LIÉ À UNE COMMANDE ---
 class ConversationCommande(models.Model):
-    """Conversation groupée entre acheteur, vendeur et livreur pour une commande."""
-    commande = models.OneToOneField(Commande, on_delete=models.CASCADE, related_name='conversation')
-    participants = models.ManyToManyField(Utilisateur, related_name='conversations', blank=True)
+    """
+    Conversation PRIVÉE entre deux participants précis d'une commande
+    (acheteur-vendeur, acheteur-livreur, ou vendeur-livreur). Chaque
+    paire a sa propre conversation, isolée des deux autres — un
+    vendeur ne voit jamais les échanges entre l'acheteur et le
+    livreur, et inversement.
+    """
+    commande = models.ForeignKey(Commande, on_delete=models.CASCADE, related_name='conversations')
+    participant_a = models.ForeignKey(Utilisateur, on_delete=models.CASCADE, related_name='conversations_a')
+    participant_b = models.ForeignKey(Utilisateur, on_delete=models.CASCADE, related_name='conversations_b')
     cree_le = models.DateTimeField(auto_now_add=True)
 
-    def __str__(self): return f"Conversation commande #{self.commande.id}"
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['commande', 'participant_a', 'participant_b'],
+                name='unique_conversation_par_paire',
+            ),
+        ]
+
+    def __str__(self):
+        return f"Conversation commande #{self.commande_id} ({self.participant_a_id} ↔ {self.participant_b_id})"
+
+    @property
+    def participants(self):
+        return [self.participant_a, self.participant_b]
+
+    def autre_participant(self, user):
+        return self.participant_b if self.participant_a_id == user.id else self.participant_a
 
 class MessageChat(models.Model):
     """Message dans une conversation de commande."""

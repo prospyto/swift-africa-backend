@@ -51,7 +51,7 @@ urlpatterns = [
     path('commandes/<int:commande_id>/decaisser/', DecaisserCommandeView.as_view(), name='commande-decaisser'),
 
     # Chat
-    path('chat/commande/<int:commande_id>/', ConversationCommandeView.as_view(), name='chat-commande'),
+    path('chat/commande/<int:commande_id>/avec/<str:autre_role>/', ConversationCommandeView.as_view(), name='chat-commande'),
     path('chat/non-lus/', MessagesNonLusView.as_view(), name='chat-non-lus'),
 
     # Profil / Notifs / Wallet
