@@ -20,20 +20,29 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        # Supprime les anciens messages et conversations de test
+        # Supprime les anciennes données de test
         migrations.RunSQL(
-            "DELETE FROM api_messagechat;",
+            "DELETE FROM api_messagechat CASCADE;",
             reverse_sql=migrations.RunSQL.noop,
         ),
         migrations.RunSQL(
-            "DELETE FROM api_conversationcommande_participants;",
+            "DELETE FROM api_conversationcommande_participants CASCADE;",
             reverse_sql=migrations.RunSQL.noop,
         ),
         migrations.RunSQL(
-            "DELETE FROM api_conversationcommande;",
+            "DELETE FROM api_conversationcommande CASCADE;",
             reverse_sql=migrations.RunSQL.noop,
         ),
 
+        # Supprime les anciens champs
+        migrations.RemoveConstraint(
+            model_name='conversationcommande',
+            name='unique_conversation_per_order',
+        ) if False else migrations.RunSQL(
+            "ALTER TABLE api_conversationcommande DROP CONSTRAINT IF EXISTS unique_conversation_per_order;",
+            reverse_sql=migrations.RunSQL.noop,
+        ),
+        
         migrations.RemoveField(
             model_name='conversationcommande',
             name='participants',
@@ -42,33 +51,51 @@ class Migration(migrations.Migration):
             model_name='conversationcommande',
             name='commande',
         ),
+
+        # Ajoute les nouveaux champs
         migrations.AddField(
             model_name='conversationcommande',
             name='commande',
             field=models.ForeignKey(
-                default=None, on_delete=django.db.models.deletion.CASCADE,
+                null=True, blank=True,
+                on_delete=django.db.models.deletion.CASCADE,
                 related_name='conversations', to='api.commande',
             ),
-            preserve_default=False,
         ),
         migrations.AddField(
             model_name='conversationcommande',
             name='participant_a',
             field=models.ForeignKey(
-                default=None, on_delete=django.db.models.deletion.CASCADE,
+                null=True, blank=True,
+                on_delete=django.db.models.deletion.CASCADE,
                 related_name='conversations_a', to=settings.AUTH_USER_MODEL,
             ),
-            preserve_default=False,
         ),
         migrations.AddField(
             model_name='conversationcommande',
             name='participant_b',
             field=models.ForeignKey(
-                default=None, on_delete=django.db.models.deletion.CASCADE,
+                null=True, blank=True,
+                on_delete=django.db.models.deletion.CASCADE,
                 related_name='conversations_b', to=settings.AUTH_USER_MODEL,
             ),
-            preserve_default=False,
         ),
+
+        # Rend les champs NOT NULL
+        migrations.RunSQL(
+            "ALTER TABLE api_conversationcommande ALTER COLUMN commande SET NOT NULL;",
+            reverse_sql="ALTER TABLE api_conversationcommande ALTER COLUMN commande DROP NOT NULL;",
+        ),
+        migrations.RunSQL(
+            "ALTER TABLE api_conversationcommande ALTER COLUMN participant_a SET NOT NULL;",
+            reverse_sql="ALTER TABLE api_conversationcommande ALTER COLUMN participant_a DROP NOT NULL;",
+        ),
+        migrations.RunSQL(
+            "ALTER TABLE api_conversationcommande ALTER COLUMN participant_b SET NOT NULL;",
+            reverse_sql="ALTER TABLE api_conversationcommande ALTER COLUMN participant_b DROP NOT NULL;",
+        ),
+
+        # Ajoute la contrainte UNIQUE
         migrations.AddConstraint(
             model_name='conversationcommande',
             constraint=models.UniqueConstraint(
