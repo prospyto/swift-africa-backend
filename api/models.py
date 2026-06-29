@@ -32,6 +32,10 @@ class Acheteur(models.Model):
 class Vendeur(models.Model):
     user = models.OneToOneField(Utilisateur, on_delete=models.CASCADE, related_name='profil_vendeur')
     boutique = models.CharField(max_length=255)
+    adresse_point_vente = models.CharField(
+        max_length=500, blank=True, null=True,
+        help_text="Adresse physique du point de vente"
+    )
 
 class Produit(models.Model):
     vendeur = models.ForeignKey(Vendeur, on_delete=models.CASCADE, related_name='produits')
@@ -70,6 +74,10 @@ class Commande(models.Model):
     ville_arrivee = models.ForeignKey(Ville, on_delete=models.PROTECT, related_name='commandes_arrivee', null=True, blank=True)
     total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     otp = models.CharField(max_length=4, blank=True)
+    adresse_livraison = models.CharField(
+        max_length=500, blank=True, null=True,
+        help_text="Adresse de livraison définie par l'acheteur"
+    )
     statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default='en_attente')
     note_donnee = models.BooleanField(default=False)
     cree_le = models.DateTimeField(auto_now_add=True)
@@ -231,3 +239,4 @@ class Notation(models.Model):
 
     def __str__(self):
         return f"{self.type_note} — {self.note}/5 (commande #{self.commande_id})"
+
